@@ -1,0 +1,26 @@
+# Modèles (à fournir par l'utilisateur — jamais commités)
+models/
+*.gguf
+*.bin
+
+# Build
+build/
+build_*/
+*.o
+*.obj
+oracle
+oracle_bench
+micro_gemm
+*.exe
+
+# Sorties de benchmark
+benchmark/results.md
+benchmark/comparison.md
+benchmark/result_*.json
+benchmark/*.md.tmp
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
