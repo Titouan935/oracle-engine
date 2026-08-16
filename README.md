@@ -1,5 +1,7 @@
 # ORACLE
 
+[![benchmark](https://github.com/Titouan935/oracle-engine/actions/workflows/benchmark.yml/badge.svg)](https://github.com/Titouan935/oracle-engine/actions/workflows/benchmark.yml)
+
 An LLM inference engine written from scratch in C++17. Zero external dependencies.
 
 No PyTorch. No BLAS. No llama.cpp. No ggml. Just the standard library (and,

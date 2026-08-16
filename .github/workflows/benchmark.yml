@@ -1,0 +1,108 @@
+name: benchmark
+
+# Build + benchmark reproductible sur les runners GitHub gratuits.
+# Se lance à chaque push sur main, ou manuellement (Actions → benchmark → Run).
+# Aucune machine perso requise : les chiffres apparaissent dans le résumé du job.
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore: [ '**.md', 'LICENSE' ]
+  workflow_dispatch:
+    inputs:
+      model_url:
+        description: "URL d'un modèle GGUF (arch llama/qwen2, quant F16/Q4_0/Q8_0/Q4_K/Q6_K)"
+        required: false
+        default: ""
+
+env:
+  # Modèle par défaut : petit, ungated, arch llama, dims multiples de 256.
+  DEFAULT_MODEL_URL: "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+  MODEL_PATH: "models/bench.gguf"
+  # Paramètres du benchmark (petits pour rester rapide en CI)
+  PROMPT: "64"
+  GEN: "32"
+  RUNS: "3"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Machine info
+        run: |
+          echo "### Runner" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          lscpu | grep -E 'Model name|^CPU\(s\)|Flags' | sed 's/Flags.*\(avx2\).*/Flags: ... avx2 fma .../' >> "$GITHUB_STEP_SUMMARY" || true
+          free -h | head -2 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve model URL
+        id: model
+        run: |
+          URL="${{ github.event.inputs.model_url }}"
+          [ -z "$URL" ] && URL="${DEFAULT_MODEL_URL}"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Model: $URL"
+
+      - name: Cache model
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MODEL_PATH }}
+          key: gguf-${{ hashFiles('.github/workflows/benchmark.yml') }}-${{ steps.model.outputs.url }}
+
+      - name: Download model
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          echo "Downloading ${{ steps.model.outputs.url }}"
+          curl -fSL --retry 3 -o "$MODEL_PATH" "${{ steps.model.outputs.url }}"
+          ls -lh "$MODEL_PATH"
+
+      - name: Build ORACLE
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+
+      - name: Benchmark ORACLE
+        run: |
+          echo "### ORACLE — $(basename "$MODEL_PATH")" >> "$GITHUB_STEP_SUMMARY"
+          ./build/oracle_bench -m "$MODEL_PATH" -p "$PROMPT" -g "$GEN" -r "$RUNS" \
+              --md oracle_bench.md | tee oracle_bench.log
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'Prefill|Génération|Peak RSS|Checksum|Config|Compilo|Threads' oracle_bench.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Kernel micro-benchmark (gemm_q)
+        continue-on-error: true
+        run: |
+          ./build/micro_gemm -m "$MODEL_PATH" -T 16 -r 5 | tee micro_gemm.log
+          echo "### Kernel gemm_q (micro-benchmark isolé)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'Correction|Ancien|Nouveau|Accél|GFLOP' micro_gemm.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Baseline llama.cpp (best-effort)
+        continue-on-error: true
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp
+          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
+          cmake --build llama.cpp/build --target llama-bench -j"$(nproc)"
+          BIN="$(find llama.cpp/build -name llama-bench -type f | head -1)"
+          echo "### Baseline — llama.cpp (\`llama-bench\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          "$BIN" -m "$MODEL_PATH" -p "$PROMPT" -n "$GEN" -r "$RUNS" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "_pp = prefill, tg = génération. Comparer au prefill/génération d'ORACLE ci-dessus._" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            oracle_bench.md
+            oracle_bench.log
+            micro_gemm.log
+          if-no-files-found: ignore
