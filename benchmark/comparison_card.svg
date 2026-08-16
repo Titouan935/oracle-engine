@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 520" width="1000" height="520" font-family="-apple-system, 'Segoe UI', Roboto, sans-serif">
+  <rect x="0" y="0" width="1000" height="520" fill="#f0efe9"/>
+  <rect x="20" y="20" width="960" height="480" rx="16" fill="#ffffff" stroke="#e2e1da" stroke-width="1"/>
+
+  <text x="48" y="74" font-size="30" font-weight="500" fill="#16150f">ORACLE <tspan fill="#9a988e" font-weight="400">vs</tspan> llama.cpp</text>
+  <text x="952" y="70" text-anchor="end" font-size="14" fill="#8a887e" font-family="ui-monospace, Menlo, Consolas, monospace">generation &amp; prefill throughput</text>
+  <text x="48" y="100" font-size="14.5" fill="#57554e" font-family="ui-monospace, Menlo, Consolas, monospace">GitHub Actions CI · TinyLlama 1.1B Q4_K_M · 4 threads · same machine</text>
+
+  <rect x="48" y="122" width="12" height="12" rx="3" fill="#2a78d6"/>
+  <text x="66" y="132" font-size="14" fill="#57554e">ORACLE — zero dependencies</text>
+  <rect x="290" y="122" width="12" height="12" rx="3" fill="#8a8982"/>
+  <text x="308" y="132" font-size="14" fill="#57554e">llama.cpp — hand-tuned SIMD</text>
+
+  <text x="48" y="184" font-size="15" fill="#57554e">Prefill (prompt eval)</text>
+  <text x="952" y="184" text-anchor="end" font-size="15" fill="#16150f" font-family="ui-monospace, Menlo, Consolas, monospace">0.33× llama.cpp</text>
+  <text x="48" y="212" font-size="13" fill="#57554e">ORACLE</text>
+  <rect x="140" y="198" width="620" height="22" rx="5" fill="#efeee8"/>
+  <rect x="140" y="198" width="205" height="22" rx="5" fill="#2a78d6"/>
+  <text x="776" y="214" font-size="16" fill="#16150f" font-family="ui-monospace, Menlo, Consolas, monospace">29.2 tok/s</text>
+  <text x="48" y="244" font-size="13" fill="#57554e">llama.cpp</text>
+  <rect x="140" y="230" width="620" height="22" rx="5" fill="#8a8982"/>
+  <text x="776" y="246" font-size="16" fill="#16150f" font-family="ui-monospace, Menlo, Consolas, monospace">88.6 tok/s</text>
+
+  <text x="48" y="300" font-size="15" fill="#57554e">Generation (decode)</text>
+  <text x="952" y="300" text-anchor="end" font-size="15" fill="#16150f" font-family="ui-monospace, Menlo, Consolas, monospace">0.26× llama.cpp</text>
+  <text x="48" y="328" font-size="13" fill="#57554e">ORACLE</text>
+  <rect x="140" y="314" width="620" height="22" rx="5" fill="#efeee8"/>
+  <rect x="140" y="314" width="163" height="22" rx="5" fill="#2a78d6"/>
+  <text x="776" y="330" font-size="16" fill="#16150f" font-family="ui-monospace, Menlo, Consolas, monospace">11.5 tok/s</text>
+  <text x="48" y="360" font-size="13" fill="#57554e">llama.cpp</text>
+  <rect x="140" y="346" width="620" height="22" rx="5" fill="#8a8982"/>
+  <text x="776" y="362" font-size="16" fill="#16150f" font-family="ui-monospace, Menlo, Consolas, monospace">43.8 tok/s</text>
+
+  <line x1="48" y1="416" x2="952" y2="416" stroke="#e2e1da" stroke-width="1"/>
+  <text x="48" y="452" font-size="14" fill="#57554e">~3–4× slower, zero external dependencies · reproducible in CI on every push</text>
+  <text x="952" y="452" text-anchor="end" font-size="14" fill="#16150f" font-family="ui-monospace, Menlo, Consolas, monospace">github.com/Titouan935/oracle-engine</text>
+</svg>

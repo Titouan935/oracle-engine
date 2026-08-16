@@ -20,6 +20,8 @@ hand-typed.
 | llama.cpp | 88.6 | 43.8 | — |
 | ratio | 0.33× | 0.26× | — |
 
+![ORACLE vs llama.cpp — prefill and generation throughput on the same CI machine](benchmark/comparison_card.png)
+
 ORACLE runs at roughly **0.3× llama.cpp — about 3–4× slower** — with **zero
 external dependencies**, against llama.cpp's years of hand-tuned SIMD kernels.
 That is the honest cost of writing every layer from scratch, and it is measured

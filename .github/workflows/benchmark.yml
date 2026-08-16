@@ -7,7 +7,7 @@ name: benchmark
 on:
   push:
     branches: [ main ]
-    paths-ignore: [ '**.md', 'LICENSE' ]
+    paths-ignore: [ '**.md', 'LICENSE', '**.png', '**.svg' ]
   workflow_dispatch:
     inputs:
       model_url:
