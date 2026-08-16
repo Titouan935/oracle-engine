@@ -68,8 +68,10 @@ jobs:
 
       - name: Benchmark ORACLE
         run: |
-          echo "### ORACLE — $(basename "$MODEL_PATH")" >> "$GITHUB_STEP_SUMMARY"
-          ./build/oracle_bench -m "$MODEL_PATH" -p "$PROMPT" -g "$GEN" -r "$RUNS" \
+          THREADS="$(nproc)"
+          echo "THREADS=$THREADS" >> "$GITHUB_ENV"
+          echo "### ORACLE — $(basename "$MODEL_PATH")  ($THREADS threads)" >> "$GITHUB_STEP_SUMMARY"
+          ./build/oracle_bench -m "$MODEL_PATH" -p "$PROMPT" -g "$GEN" -r "$RUNS" -t "$THREADS" \
               --md oracle_bench.md | tee oracle_bench.log
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           grep -E 'Prefill|Génération|Peak RSS|Checksum|Config|Compilo|Threads' oracle_bench.log >> "$GITHUB_STEP_SUMMARY" || true
@@ -91,9 +93,9 @@ jobs:
           cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
           cmake --build llama.cpp/build --target llama-bench -j"$(nproc)"
           BIN="$(find llama.cpp/build -name llama-bench -type f | head -1)"
-          echo "### Baseline — llama.cpp (\`llama-bench\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Baseline — llama.cpp (\`llama-bench\`, ${THREADS} threads)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          "$BIN" -m "$MODEL_PATH" -p "$PROMPT" -n "$GEN" -r "$RUNS" | tee -a "$GITHUB_STEP_SUMMARY"
+          "$BIN" -m "$MODEL_PATH" -p "$PROMPT" -n "$GEN" -r "$RUNS" -t "${THREADS}" | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "_pp = prefill, tg = génération. Comparer au prefill/génération d'ORACLE ci-dessus._" >> "$GITHUB_STEP_SUMMARY"
 
