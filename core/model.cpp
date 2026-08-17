@@ -135,6 +135,22 @@ void Model::cache_norms() {
             load_norm_n(ln("attn_k_norm.weight"), &attn_k_norm_w_[(size_t)l * Hd], Hd);
         }
     }
+
+    // Biais Q/K/V (Qwen2/2.5). Chargés une fois si présents.
+    has_qkv_bias_ = gguf_.has_tensor("blk.0.attn_q.bias");
+    if (has_qkv_bias_) {
+        const int NQ = (int)cfg.n_q_total(), NKV = (int)cfg.n_kv_total();
+        attn_q_bias_.resize((size_t)L * NQ);
+        attn_k_bias_.resize((size_t)L * NKV);
+        attn_v_bias_.resize((size_t)L * NKV);
+        for (int l = 0; l < L; l++) {
+            auto ln = [&](const std::string& k) { return "blk." + std::to_string(l) + "." + k; };
+            load_norm_n(ln("attn_q.bias"), &attn_q_bias_[(size_t)l * NQ],  NQ);
+            load_norm_n(ln("attn_k.bias"), &attn_k_bias_[(size_t)l * NKV], NKV);
+            load_norm_n(ln("attn_v.bias"), &attn_v_bias_[(size_t)l * NKV], NKV);
+        }
+        LOG_INFO("Model", "Biais QKV Qwen2 chargés (" + std::to_string(L) + " couches)");
+    }
 }
 
 bool Model::save_state(const std::string& path, int pos) const {
@@ -364,6 +380,13 @@ const float* Model::forward(int32_t token_id, int pos, bool compute_logits) {
             ops::matmul(v_.data(), xb_.data(), wbuf_.data(), 1, NKV, D);
         }
 
+        // Biais Q/K/V (Qwen2/2.5) — indispensable, sinon sortie dégénérée.
+        if (has_qkv_bias_) {
+            ops::add(q_.data(), &attn_q_bias_[(size_t)l * NQ],  NQ);
+            ops::add(k_.data(), &attn_k_bias_[(size_t)l * NKV], NKV);
+            ops::add(v_.data(), &attn_v_bias_[(size_t)l * NKV], NKV);
+        }
+
         // QK-norm (Qwen3) : RMSNorm par tête sur head_dim, avant RoPE.
         // Poids partagés entre toutes les têtes (taille head_dim).
         if (cfg.qk_norm) {
@@ -547,6 +570,15 @@ void Model::forward_prefill(const int32_t* tokens, int n, int start_pos,
         proj(ln.attn_q, Q.data(), Xn.data(), NQ,  D);
         proj(ln.attn_k, K.data(), Xn.data(), NKV, D);
         proj(ln.attn_v, V.data(), Xn.data(), NKV, D);
+
+        // Biais Q/K/V (Qwen2/2.5), par token.
+        if (has_qkv_bias_) {
+            for (int t = 0; t < n; t++) {
+                ops::add(Q.data() + (size_t)t * NQ,  &attn_q_bias_[(size_t)l * NQ],  NQ);
+                ops::add(K.data() + (size_t)t * NKV, &attn_k_bias_[(size_t)l * NKV], NKV);
+                ops::add(V.data() + (size_t)t * NKV, &attn_v_bias_[(size_t)l * NKV], NKV);
+            }
+        }
 
         // QK-norm (Qwen3), par token puis par tête.
         if (cfg.qk_norm) {

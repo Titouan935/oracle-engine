@@ -148,6 +148,13 @@ private:
     std::vector<float> attn_q_norm_w_;  // [n_layers × head_dim] (Qwen3 QK-norm)
     std::vector<float> attn_k_norm_w_;  // [n_layers × head_dim]
 
+    // Biais Q/K/V (Qwen2/2.5 en ont ; Llama non). Appliqués après les
+    // projections. Sans eux, les petits modèles Qwen dégénèrent (sortie vide).
+    bool               has_qkv_bias_ = false;
+    std::vector<float> attn_q_bias_;    // [n_layers × n_q_total]
+    std::vector<float> attn_k_bias_;    // [n_layers × n_kv_total]
+    std::vector<float> attn_v_bias_;    // [n_layers × n_kv_total]
+
     // Noms de tenseurs de poids par couche, construits UNE fois au chargement.
     // Évite de reconstruire "blk.N.xxx.weight" (std::to_string + concaténations,
     // ~200 allocations/token pour Qwen 7B) à chaque token et chaque couche.
