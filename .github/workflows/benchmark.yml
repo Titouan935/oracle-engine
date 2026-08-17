@@ -118,3 +118,56 @@ jobs:
             oracle_bench.log
             micro_gemm.log
           if-no-files-found: ignore
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Démo wall-clock du speculative decoding avec un couple Qwen2.5 assorti
+  # (même vocab) : petit draft (0.5B) + gros main (1.5B). Best-effort.
+  spec_decode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ORACLE
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+
+      - name: Cache Qwen main (1.5B)
+        id: cache-main
+        uses: actions/cache@v4
+        with:
+          path: models/qwen-main.gguf
+          key: qwen-main-1.5b-q4km-v1
+
+      - name: Cache Qwen draft (0.5B)
+        id: cache-draft
+        uses: actions/cache@v4
+        with:
+          path: models/qwen-draft.gguf
+          key: qwen-draft-0.5b-q4km-v1
+
+      - name: Download Qwen pair
+        run: |
+          mkdir -p models
+          [ -f models/qwen-main.gguf ]  || curl -fSL --retry 3 -o models/qwen-main.gguf  "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+          [ -f models/qwen-draft.gguf ] || curl -fSL --retry 3 -o models/qwen-draft.gguf "https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
+          ls -lh models/
+
+      - name: Speculative decoding — wall-clock (Qwen 0.5B draft + 1.5B main)
+        continue-on-error: true
+        run: |
+          T="$(nproc)"
+          ./build/oracle_bench -m models/qwen-main.gguf --draft models/qwen-draft.gguf \
+              -p 64 -g 48 -r 2 -t "$T" | tee spec_qwen.log
+          echo "### Speculative decoding — wall-clock (Qwen2.5 0.5B draft + 1.5B main, $T threads)" >> "$GITHUB_STEP_SUMMARY"
+          echo "_Small, well-matched draft + larger main (shared vocab). The real speedup shows here (unlike draft = main)._" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'Génération  *:|Génération \(spec\)|Acceptation|Passes main|Sortie exacte|vocab draft' spec_qwen.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload spec results
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-decode-results
+          path: spec_qwen.log
+          if-no-files-found: ignore
