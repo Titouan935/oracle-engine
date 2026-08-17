@@ -293,6 +293,7 @@ int main(int argc, char** argv) {
         } else {
             draft.warmup();
             const int SPEC_N = std::min(std::max(args.spec_n, 1), 64);
+            std::vector<float> blog((size_t)(SPEC_N + 1) * cfg.n_vocab); // logits batchés de vérif
             double spec_tps = 0.0; uint64_t spec_checksum = 0;
             long m_fwd = 0, gen = 0, acc = 0, prop = 0;
 
@@ -320,27 +321,37 @@ int main(int argc, char** argv) {
                     if (ndt == 0) break;
                     lprop += ndt;
 
-                    // b) main vérifie chaque token proposé
-                    int32_t verify = next; bool brk = false;
-                    for (int k = 0; k < ndt; k++) {
-                        if (pos >= max_ctx - 1) { brk = true; break; }
-                        const float* lg = model.forward(verify, pos++); lm_fwd++;
-                        if (!lg) { brk = true; break; }
-                        int32_t mtok = argmax(lg, (int)cfg.n_vocab);
+                    // b) main vérifie les ndt tokens en UNE passe batchée.
+                    //    Entrée = [next, d0, ..., d_{ndt-1}] aux positions
+                    //    pos..pos+ndt ; L[j] prédit le token après vin[j].
+                    //    Les poids (surtout le LM head) ne sont lus QU'UNE fois.
+                    const int V = (int)cfg.n_vocab;
+                    int nver = ndt + 1;
+                    if (pos + nver > max_ctx) nver = max_ctx - pos;
+                    if (nver < 1) break;
+                    int32_t vin[65];
+                    vin[0] = next;
+                    for (int k = 0; k < nver - 1; k++) vin[k + 1] = dtok[k];
+                    model.forward_batch(vin, nver, pos, blog.data()); lm_fwd++;   // 1 passe = poids lus 1×
+
+                    int a = 0; bool brk = false;
+                    for (int k = 0; k < ndt && k < nver; k++) {
+                        int32_t mtok = argmax(blog.data() + (size_t)k * V, V);
                         lgen++; csum ^= (uint64_t)(uint32_t)mtok; csum *= 1099511628211ULL;
-                        if (mtok != dtok[k]) { next = mtok; brk = true; break; }
-                        lacc++; next = dtok[k]; verify = next;
+                        if (mtok != dtok[k]) { next = mtok; a = k; brk = true; break; }
+                        lacc++; a = k + 1; next = dtok[k];
                         if (lgen >= args.n_gen) { brk = true; break; }
                     }
-                    if (brk) continue;
+                    pos += a + 1;   // next_old + a tokens acceptés consommés
 
-                    // c) bonus token si tous acceptés
-                    if (lgen < args.n_gen && pos < max_ctx - 1) {
-                        const float* lg = model.forward(next, pos++); lm_fwd++;
-                        if (!lg) break;
-                        next = argmax(lg, (int)cfg.n_vocab);
-                        lgen++; csum ^= (uint64_t)(uint32_t)next; csum *= 1099511628211ULL;
-                        draft.forward(dtok[ndt - 1], pos - 1, false);   // resync KV draft
+                    if (brk) continue;   // rejet partiel / n_gen atteint : pas de bonus
+
+                    // c) tous acceptés → bonus = argmax(L[ndt]) + resync KV draft
+                    if (lgen < args.n_gen && ndt < nver && pos < max_ctx - 1) {
+                        int32_t b = argmax(blog.data() + (size_t)ndt * V, V);
+                        lgen++; csum ^= (uint64_t)(uint32_t)b; csum *= 1099511628211ULL;
+                        next = b;
+                        draft.forward(dtok[ndt - 1], pos - 1, false);   // comble la position manquante du draft
                     }
                 }
                 double dt = std::chrono::duration<double>(
@@ -359,7 +370,7 @@ int main(int argc, char** argv) {
                         spec_tps, speedup, g_med);
             std::printf("  Acceptation       : %.1f%%   (%ld/%ld tokens draft acceptés, SPEC_N=%d)\n",
                         accept, acc, prop, SPEC_N);
-            std::printf("  Forwards main/tok : %.2f   (1.00 = pas de gain ; plus bas = mieux)\n", fwd_tok);
+            std::printf("  Passes main/tok   : %.2f   (poids lus/token ; 1.00 = pas de gain, plus bas = mieux)\n", fwd_tok);
             std::printf("  Sortie exacte     : %s  (checksum spec %016llx vs greedy %016llx)\n",
                         exact ? "OUI ✓" : "NON ✗ (BUG)",
                         (unsigned long long)spec_checksum, (unsigned long long)gen_checksum);

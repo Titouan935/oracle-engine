@@ -75,9 +75,18 @@ public:
 
     // Prefill BATCHÉ : traite les n tokens du prompt en une passe (GEMM
     // weight-stationary via gemm_q) et remplit le KV cache aux positions
-    // start_pos..start_pos+n-1. Ne calcule pas de logits. Équivalent (aux
-    // arrondis près) à n appels forward(..., compute_logits=false).
-    void forward_prefill(const int32_t* tokens, int n, int start_pos = 0);
+    // start_pos..start_pos+n-1. Si out_logits != nullptr, calcule AUSSI les
+    // logits des n positions (norme finale + LM head batché) → out_logits doit
+    // faire n * n_vocab floats. Sinon, pas de logits (comme avant).
+    void forward_prefill(const int32_t* tokens, int n, int start_pos = 0,
+                         float* out_logits = nullptr);
+
+    // Vérification batchée pour le speculative decoding : traite n tokens en
+    // UNE passe weight-stationary ET retourne les logits des n positions (LM
+    // head lu une seule fois pour les n tokens). out_logits = n * n_vocab floats.
+    void forward_batch(const int32_t* tokens, int n, int start_pos, float* out_logits) {
+        forward_prefill(tokens, n, start_pos, out_logits);
+    }
 
     // Remet le KV cache à zéro (nouvelle conversation)
     void reset() { kv_.init(cfg); }

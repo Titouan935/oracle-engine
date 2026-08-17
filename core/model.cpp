@@ -484,7 +484,8 @@ const float* Model::forward(int32_t token_id, int pos, bool compute_logits) {
 //  Résultat identique (aux arrondis flottants près) à n appels forward().
 //  Ne touche pas aux buffers single-token (x_, q_, …) : tout est local.
 // ══════════════════════════════════════════════════════════════════════════
-void Model::forward_prefill(const int32_t* tokens, int n, int start_pos) {
+void Model::forward_prefill(const int32_t* tokens, int n, int start_pos,
+                            float* out_logits) {
     if (n <= 0) return;
     const int D   = (int)cfg.embed_dim;
     const int H   = (int)cfg.n_heads;
@@ -609,5 +610,33 @@ void Model::forward_prefill(const int32_t* tokens, int n, int start_pos) {
         proj(ln.ffn_down, XO.data(), G.data(), D, FF);
         for (size_t i = 0; i < (size_t)n * D; i++) X[i] += XO[i];
     }
-    // Prefill : pas de logits. Le KV cache est rempli pour start_pos..start_pos+n-1.
+
+    // KV cache rempli pour start_pos..start_pos+n-1. Logits optionnels.
+    if (!out_logits) return;
+
+    // Normalisation finale (par token) réutilise Xn comme scratch.
+    for (int t = 0; t < n; t++)
+        ops::rmsnorm(Xn.data() + (size_t)t * D, X.data() + (size_t)t * D,
+                     output_norm_w_.data(), D);
+
+    // LM head BATCHÉ : les poids (n_vocab × D) sont lus UNE seule fois pour les
+    // n positions (gemm_q weight-stationary) → c'est l'amortissement clé de la
+    // vérification batchée du speculative decoding.
+    const int VOC = (int)cfg.n_vocab;
+    const std::string lm_head = gguf_.has_tensor("output.weight")
+                               ? "output.weight" : "token_embd.weight";
+    if (!gguf_.gemm_q(lm_head, out_logits, Xn.data(), n, VOC, D)) {
+        // Fallback : par position (gemv quantisé, sinon dequant scalaire).
+        for (int t = 0; t < n; t++) {
+            float* lt = out_logits + (size_t)t * VOC;
+            const float* xt = Xn.data() + (size_t)t * D;
+            if (!gguf_.gemv_q(lm_head, lt, xt, VOC, D)) {
+                std::vector<float> row(D);
+                for (int i = 0; i < VOC; i++) {
+                    gguf_.dequantize_row(lm_head, i, row.data());
+                    lt[i] = ops::dot(xt, row.data(), D);
+                }
+            }
+        }
+    }
 }
