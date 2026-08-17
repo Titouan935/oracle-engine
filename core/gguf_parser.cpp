@@ -876,38 +876,55 @@ bool GGUFParser::gemv_q_range(const std::string& name, float* out, const float* 
     if (it == tensors_.end()) return false;
     const TensorInfo& ti = it->second;
     const uint8_t* base = data_base_ + ti.offset;
+    // Prefetch de la ligne de poids suivante pendant le calcul de la courante,
+    // pour masquer la latence RAM au franchissement de la frontière de ligne.
+    #define ORACLE_PF_NEXT_ROW \
+        if (j + 1 < j1) { \
+            const uint8_t* nxt = base + (uint64_t)(j + 1) * row_bytes; \
+            __builtin_prefetch(nxt, 0, 3); \
+            __builtin_prefetch(nxt + 64, 0, 3); \
+        }
     switch (ti.type) {
     case GGMLType::Q8_0: {
         const uint64_t row_bytes = (uint64_t)(n_in / 32) * 34;
         #pragma omp parallel for schedule(static)
-        for (int j = j0; j < j1; j++)
+        for (int j = j0; j < j1; j++) {
+            ORACLE_PF_NEXT_ROW
             out[j] = dot_q8_0(base + (uint64_t)j * row_bytes, n_in, x);
+        }
         return true;
     }
     case GGMLType::Q4_0: {
         const uint64_t row_bytes = (uint64_t)(n_in / 32) * 18;
         #pragma omp parallel for schedule(static)
-        for (int j = j0; j < j1; j++)
+        for (int j = j0; j < j1; j++) {
+            ORACLE_PF_NEXT_ROW
             out[j] = dot_q4_0(base + (uint64_t)j * row_bytes, n_in, x);
+        }
         return true;
     }
     case GGMLType::Q4_K: {
         const uint64_t row_bytes = (uint64_t)(n_in / 256) * 144;
         #pragma omp parallel for schedule(static)
-        for (int j = j0; j < j1; j++)
+        for (int j = j0; j < j1; j++) {
+            ORACLE_PF_NEXT_ROW
             out[j] = dot_q4k(base + (uint64_t)j * row_bytes, n_in, x);
+        }
         return true;
     }
     case GGMLType::Q6_K: {
         const uint64_t row_bytes = (uint64_t)(n_in / 256) * 210;
         #pragma omp parallel for schedule(static)
-        for (int j = j0; j < j1; j++)
+        for (int j = j0; j < j1; j++) {
+            ORACLE_PF_NEXT_ROW
             out[j] = dot_q6k(base + (uint64_t)j * row_bytes, n_in, x);
+        }
         return true;
     }
     default:
         return false;
     }
+    #undef ORACLE_PF_NEXT_ROW
 }
 
 // ══════════════════════════════════════════════════════════════════════════
