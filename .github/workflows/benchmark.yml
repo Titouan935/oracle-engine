@@ -144,13 +144,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: models/qwen-draft.gguf
-          key: qwen-draft-0.5b-q4km-v1
+          key: qwen-draft-0.5b-q8_0-v2
 
       - name: Download Qwen pair
         run: |
           mkdir -p models
           [ -f models/qwen-main.gguf ]  || curl -fSL --retry 3 -o models/qwen-main.gguf  "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
-          [ -f models/qwen-draft.gguf ] || curl -fSL --retry 3 -o models/qwen-draft.gguf "https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
+          [ -f models/qwen-draft.gguf ] || curl -fSL --retry 3 -o models/qwen-draft.gguf "https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q8_0.gguf"
           ls -lh models/
 
       - name: Speculative decoding — wall-clock (Qwen 0.5B draft + 1.5B main)
