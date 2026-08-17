@@ -102,6 +102,8 @@ struct Args {
     int   threads  = 0;   // 0 = laisser OpenMP décider
     std::string md_out;
     std::string json_out;
+    std::string draft;    // modèle draft → mesure speculative decoding
+    int   spec_n   = 4;   // tokens proposés par le draft par étape
 };
 
 static void usage(const char* exe) {
@@ -113,7 +115,9 @@ static void usage(const char* exe) {
         "  -r <N>        Runs (1er jeté en warmup)         (défaut 5)\n"
         "  -t <N>        Threads (0 = auto OpenMP)         (défaut 0)\n"
         "  --md <path>   Écrit un fragment Markdown\n"
-        "  --json <path> Écrit un rapport JSON\n", exe);
+        "  --json <path> Écrit un rapport JSON\n"
+        "  --draft <p>   Modèle draft → mesure le speculative decoding\n"
+        "  --spec-n <N>  Tokens proposés par le draft/étape   (défaut 4)\n", exe);
 }
 
 static bool parse_args(int argc, char** argv, Args& a) {
@@ -130,6 +134,8 @@ static bool parse_args(int argc, char** argv, Args& a) {
         else if (k == "-t") { const char* v = next("-t"); if (!v) return false; a.threads = std::atoi(v); }
         else if (k == "--md")   { const char* v = next("--md");   if (!v) return false; a.md_out = v; }
         else if (k == "--json") { const char* v = next("--json"); if (!v) return false; a.json_out = v; }
+        else if (k == "--draft"){ const char* v = next("--draft");if (!v) return false; a.draft = v; }
+        else if (k == "--spec-n"){const char* v = next("--spec-n");if (!v) return false; a.spec_n = std::atoi(v); }
         else if (k == "-h" || k == "--help") { usage(argv[0]); return false; }
         else { std::fprintf(stderr, "option inconnue : %s\n", k.c_str()); return false; }
     }
@@ -270,6 +276,96 @@ int main(int argc, char** argv) {
     std::printf("  Checksum   : %016llx  (déterministe : identique entre runs)\n",
                 (unsigned long long)gen_checksum);
     std::printf("───────────────────────────────────────────────────────────\n");
+
+    // ── Speculative decoding (si --draft) ─────────────────────────────────
+    // Le spec-decode est EXACT : il produit exactement les mêmes tokens que le
+    // modèle principal seul. Donc le checksum doit être identique à la
+    // génération normale, quel que soit le draft (invariant de correction).
+    // Le taux d'acceptation et les forwards main/token mesurent le gain.
+    if (!args.draft.empty()) {
+        std::printf("\nSpeculative decoding — draft : %s\n", basename_of(args.draft).c_str());
+        Model draft;
+        if (!draft.load(args.draft)) {
+            std::fprintf(stderr, "[warn] chargement draft échoué (%s)\n", args.draft.c_str());
+        } else if (draft.cfg.n_vocab != cfg.n_vocab) {
+            std::fprintf(stderr, "[warn] vocab draft (%u) != main (%u) — spec-decode impossible\n",
+                         draft.cfg.n_vocab, cfg.n_vocab);
+        } else {
+            draft.warmup();
+            const int SPEC_N = std::min(std::max(args.spec_n, 1), 64);
+            double spec_tps = 0.0; uint64_t spec_checksum = 0;
+            long m_fwd = 0, gen = 0, acc = 0, prop = 0;
+
+            for (int run = 0; run < 2; run++) {           // run 0 = warmup, run 1 = mesuré
+                model.reset(); draft.reset();
+                model.forward_prefill(prompt.data(), prefill_count, 0);
+                draft.forward_prefill(prompt.data(), prefill_count, 0);
+                int pos = prefill_count;
+                int32_t next = prompt[prefill_count];
+                long lm_fwd = 0, lgen = 0, lacc = 0, lprop = 0;
+                uint64_t csum = 1469598103934665603ULL;
+                const int max_ctx = (int)cfg.ctx_len;
+
+                auto s0 = std::chrono::high_resolution_clock::now();
+                while (lgen < args.n_gen && pos < max_ctx - 1) {
+                    // a) draft propose SPEC_N tokens greedily
+                    int32_t dtok[64]; int ndt = 0;
+                    { int dp = pos; int32_t dt = next;
+                      for (int k = 0; k < SPEC_N && dp < (int)draft.cfg.ctx_len - 1; k++) {
+                          const float* dl = draft.forward(dt, dp++);
+                          if (!dl) break;
+                          int32_t b = argmax(dl, (int)draft.cfg.n_vocab);
+                          dtok[ndt++] = b; dt = b;
+                      } }
+                    if (ndt == 0) break;
+                    lprop += ndt;
+
+                    // b) main vérifie chaque token proposé
+                    int32_t verify = next; bool brk = false;
+                    for (int k = 0; k < ndt; k++) {
+                        if (pos >= max_ctx - 1) { brk = true; break; }
+                        const float* lg = model.forward(verify, pos++); lm_fwd++;
+                        if (!lg) { brk = true; break; }
+                        int32_t mtok = argmax(lg, (int)cfg.n_vocab);
+                        lgen++; csum ^= (uint64_t)(uint32_t)mtok; csum *= 1099511628211ULL;
+                        if (mtok != dtok[k]) { next = mtok; brk = true; break; }
+                        lacc++; next = dtok[k]; verify = next;
+                        if (lgen >= args.n_gen) { brk = true; break; }
+                    }
+                    if (brk) continue;
+
+                    // c) bonus token si tous acceptés
+                    if (lgen < args.n_gen && pos < max_ctx - 1) {
+                        const float* lg = model.forward(next, pos++); lm_fwd++;
+                        if (!lg) break;
+                        next = argmax(lg, (int)cfg.n_vocab);
+                        lgen++; csum ^= (uint64_t)(uint32_t)next; csum *= 1099511628211ULL;
+                        draft.forward(dtok[ndt - 1], pos - 1, false);   // resync KV draft
+                    }
+                }
+                double dt = std::chrono::duration<double>(
+                    std::chrono::high_resolution_clock::now() - s0).count();
+                if (run == 1) {
+                    spec_tps = (lgen > 0 && dt > 0) ? lgen / dt : 0.0;
+                    spec_checksum = csum; m_fwd = lm_fwd; gen = lgen; acc = lacc; prop = lprop;
+                }
+            }
+
+            double accept  = prop > 0 ? 100.0 * acc / prop : 0.0;
+            double fwd_tok = gen  > 0 ? (double)m_fwd / gen : 0.0;
+            double speedup = g_med > 0 ? spec_tps / g_med : 0.0;
+            bool   exact   = (spec_checksum == gen_checksum);
+            std::printf("  Génération (spec) : %.1f tok/s   (×%.2f vs greedy simple %.1f tok/s)\n",
+                        spec_tps, speedup, g_med);
+            std::printf("  Acceptation       : %.1f%%   (%ld/%ld tokens draft acceptés, SPEC_N=%d)\n",
+                        accept, acc, prop, SPEC_N);
+            std::printf("  Forwards main/tok : %.2f   (1.00 = pas de gain ; plus bas = mieux)\n", fwd_tok);
+            std::printf("  Sortie exacte     : %s  (checksum spec %016llx vs greedy %016llx)\n",
+                        exact ? "OUI ✓" : "NON ✗ (BUG)",
+                        (unsigned long long)spec_checksum, (unsigned long long)gen_checksum);
+            std::printf("───────────────────────────────────────────────────────────\n");
+        }
+    }
 
     // ── Fragment Markdown (pour BENCHMARKS.md) ────────────────────────────
     if (!args.md_out.empty()) {

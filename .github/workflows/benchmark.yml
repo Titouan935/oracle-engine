@@ -77,6 +77,16 @@ jobs:
           grep -E 'Prefill|Génération|Peak RSS|Checksum|Config|Compilo|Threads' oracle_bench.log >> "$GITHUB_STEP_SUMMARY" || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Speculative decoding (correctness, draft = main)
+        continue-on-error: true
+        run: |
+          ./build/oracle_bench -m "$MODEL_PATH" -p 64 -g 32 -r 1 -t "$THREADS" --draft "$MODEL_PATH" | tee spec.log
+          echo "### Speculative decoding — correctness check (draft = main)" >> "$GITHUB_STEP_SUMMARY"
+          echo "_With draft = main, acceptance must be ~100% and the output checksum must match plain greedy — a correctness proof for the spec-decode loop. Real speedup needs a smaller, well-matched draft (e.g. Qwen 7B + Qwen 0.5B)._" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'Génération \(spec\)|Acceptation|Forwards main|Sortie exacte' spec.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Kernel micro-benchmark (gemm_q)
         continue-on-error: true
         run: |
